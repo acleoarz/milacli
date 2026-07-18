@@ -1,0 +1,38 @@
+{
+  "name": "milacli",
+  "version": "1.0.0",
+  "description": "MilaCLI — локальный консольный AI-агент «Мила» для разработки (аналог Claude Code). Полный доступ к файловой системе и терминалу через систему инструментов с двухэтапной защитой.",
+  "type": "module",
+  "bin": {
+    "mila": "./src/index.js"
+  },
+  "main": "./src/index.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "boxen": "^7.1.1",
+    "chalk": "^5.3.0",
+    "commander": "^12.0.0",
+    "diff": "^5.2.0",
+    "glob": "^10.3.10",
+    "inquirer": "^9.2.15",
+    "ora": "^8.0.1"
+  },
+  "optionalDependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.0",
+    "screenshot-desktop": "^1.15.0"
+  },
+  "keywords": [
+    "ai",
+    "cli",
+    "agent",
+    "developer-tools",
+    "llm"
+  ],
+  "author": "MilaCLI",
+  "license": "MIT"
+}
