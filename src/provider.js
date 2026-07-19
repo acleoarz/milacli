@@ -15,11 +15,12 @@ export class ProviderError extends Error {
 }
 
 export class Provider {
-  constructor({ baseUrl, apiKey, model, effort } = {}) {
+  constructor({ baseUrl, apiKey, model, effort, licenseKey } = {}) {
     this.baseUrl = (baseUrl || '').replace(/\/+$/, '');
     this.apiKey = apiKey;
     this.model = model;
     this.effort = effort || 'medium';
+    this.licenseKey = licenseKey;
   }
 
   get endpoint() {
@@ -27,10 +28,13 @@ export class Provider {
   }
 
   _headers() {
-    return {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${this.apiKey}`,
-    };
+    const headers = { 'Content-Type': 'application/json' };
+    // Через встроенный прокси Милы (mila-proxy) авторизация идёт по
+    // лицензионному ключу — сам прокси подставляет реальный ключ провайдера.
+    // Прямое подключение к провайдеру (свой apiKey) остаётся как fallback.
+    if (this.licenseKey) headers['X-Mila-License'] = this.licenseKey;
+    if (this.apiKey) headers.Authorization = `Bearer ${this.apiKey}`;
+    return headers;
   }
 
   /**

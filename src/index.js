@@ -43,32 +43,64 @@ function clearTerminal() {
   process.stdout.write('\x1Bc');
 }
 
+// Градиент из hex-цветов на 256-цветной палитре терминала (голубой → сиреневый → розовый),
+// в стиле блочного баннера Gemini CLI.
+const BANNER_GRADIENT = ['#4AA8FF', '#5B8CFF', '#7A6FFF', '#9A5CFF', '#B855F0', '#D454D8', '#EA55B8', '#F85C97'];
+
+function gradientBlockRow(cols) {
+  let row = '';
+  for (let i = 0; i < cols; i++) {
+    const color = BANNER_GRADIENT[i % BANNER_GRADIENT.length];
+    row += chalk.bgHex(color)('  ');
+  }
+  return row;
+}
+
 function banner(agentMode) {
-  console.log(
-    chalk.magentaBright(
-      [
-        '  888b     d888 d8b 888          ',
-        '  8888b   d8888 Y8P 888          ',
-        '  88888b.d88888     888          ',
-        '  888Y88888P888 888 888  8888b.  ',
-        '  888 Y888P 888 888 888     "88b ',
-        '  888  Y8P  888 888 888 .d888888 ',
-        '  888   "   888 888 888 888  888 ',
-        '  888       888 888 888 "Y888888 ',
-      ].join('\n'),
-    ),
-  );
+  // Блочная градиентная "шапка" (2 строки блоков), похожая на верх баннера Gemini CLI.
+  console.log(gradientBlockRow(20));
+  console.log(gradientBlockRow(20));
+  console.log();
+
   const modeLabel = agentMode
     ? chalk.bgMagenta.black.bold(' AGENT MODE ') + chalk.gray(' — экран · мышь/клавиатура · веб')
-    : chalk.bgCyan.black.bold(' CODE MODE ') + chalk.gray(' — файлы · терминал (как Claude Code)');
-  console.log(
-    boxen(chalk.gray('Мила · локальный AI-агент для разработки · v1.0.0') + '\n' + modeLabel, {
-      padding: { left: 1, right: 1, top: 0, bottom: 0 },
-      margin: { top: 0, bottom: 1, left: 0, right: 0 },
-      borderColor: agentMode ? 'magenta' : 'cyan',
-      borderStyle: 'round',
-    }),
-  );
+    : chalk.bgCyan.black.bold(' CODE MODE ') + chalk.gray(' — файлы · терминал');
+
+  console.log(chalk.bold('MilaCLI') + chalk.gray(' v1.0.0 — локальный AI-агент «Мила» для разработки'));
+  console.log(modeLabel);
+  console.log();
+  console.log(chalk.bold('Tips for getting started:'));
+  console.log('1. Ask questions, edit files, or run commands.');
+  console.log('2. Be specific for the best results.');
+  console.log('3. Create ' + chalk.cyanBright.bold('MILA.md') + ' files to customize your interactions with Mila.');
+  console.log('4. ' + chalk.cyanBright.bold('/help') + ' for more information.');
+  console.log();
+}
+
+/** Предупреждение, если Мила запущена в домашней директории — аналог Gemini CLI. */
+function homeDirWarning() {
+  const cwd = process.cwd();
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (home && cwd === home) {
+    console.log(
+      boxen(
+        chalk.yellow('You are running MilaCLI in your home directory. It is recommended to\nrun in a project-specific directory.'),
+        { padding: { left: 1, right: 1, top: 0, bottom: 0 }, margin: { top: 0, bottom: 1, left: 0, right: 0 }, borderColor: 'yellow', borderStyle: 'round' },
+      ),
+    );
+  }
+}
+
+/** Нижняя статусная строка REPL, в стиле Gemini CLI: путь ~ слева, режим справа. */
+function statusBar(agentMode) {
+  const cwd = process.cwd();
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const displayPath = home && cwd.startsWith(home) ? '~' + cwd.slice(home.length) : cwd;
+  const left = chalk.gray(displayPath || '~');
+  const right = chalk.gray(agentMode ? 'agent mode' : 'no sandbox') + '   ' + chalk.gray('auto');
+  const width = process.stdout.columns || 80;
+  const pad = Math.max(1, width - displayPath.length - 20);
+  console.log(left + ' '.repeat(pad) + right);
 }
 
 /** Интеллектуальная диагностика пинг-теста согласно ТЗ. */
@@ -147,10 +179,17 @@ program
     clearTerminal();
     banner(false);
     const existing = listProfiles();
+    console.log(
+      chalk.gray(
+        'Base URL и API-ключ нужны только для прямого подключения к своему провайдеру.\n' +
+          'Если у тебя активирована MilaCLI+ — просто оставь API-ключ пустым (Enter):\n' +
+          'запросы пойдут через встроенный прокси Милы по твоему лицензионному ключу.\n',
+      ),
+    );
     const answers = await inquirer.prompt([
       { type: 'input', name: 'name', message: 'Имя профиля:', default: existing.current || 'default' },
       { type: 'input', name: 'baseUrl', message: 'Base URL (OpenAI-совместимый API):', default: 'https://aihub.071129.xyz/v1' },
-      { type: 'password', name: 'apiKey', message: 'API-ключ:', mask: '*' },
+      { type: 'password', name: 'apiKey', message: 'API-ключ (Enter — пусто, если используешь MilaCLI+ через прокси):', mask: '*' },
       { type: 'list', name: 'plan', message: 'Подписка:', choices: getPlanChoices(), default: 'standard' },
       { type: 'list', name: 'effort', message: 'Уровень эффорта рассуждений:', choices: ['low', 'medium', 'high'], default: 'medium' },
       { type: 'confirm', name: 'setPassword', message: 'Установить пароль на этот профиль?', default: false },
@@ -170,7 +209,14 @@ program
     }
 
     const plan = getPlanById(answers.plan);
-    const pingPayload = { baseUrl: answers.baseUrl, apiKey: answers.apiKey, model: plan.model, effort: answers.effort };
+    const existingLicenseKey = existing.profiles?.[answers.name]?.licenseKey;
+    const pingPayload = {
+      baseUrl: answers.baseUrl,
+      apiKey: answers.apiKey,
+      model: plan.model,
+      effort: answers.effort,
+      licenseKey: existingLicenseKey,
+    };
     const ok = await runPingDiagnostics(pingPayload);
 
     let save = ok;
@@ -190,6 +236,7 @@ program
         effort: answers.effort,
         hwid: getDeviceHwid(),
       };
+      if (existingLicenseKey) profile.licenseKey = existingLicenseKey;
       if (passwordHash) profile.passwordHash = passwordHash;
       saveProfile(answers.name, profile);
       console.log(chalk.green(`\n✔ Профиль "${answers.name}" (${plan.label}) сохранён в ~/.milacli/config.json`));
@@ -334,6 +381,7 @@ program.action(async () => {
 
   clearTerminal();
   banner(agentMode);
+  homeDirWarning();
 
   if (!configExists()) {
     console.log(
@@ -366,7 +414,9 @@ program.action(async () => {
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const { input } = await inquirer.prompt([{ type: 'input', name: 'input', message: chalk.bold('Вы:') }]);
+    const { input } = await inquirer.prompt([
+      { type: 'input', name: 'input', message: chalk.cyanBright.bold('>'), prefix: '', suffix: '' },
+    ]);
     const trimmed = (input || '').trim();
     if (!trimmed) continue;
     if (trimmed === '/exit') break;
@@ -381,6 +431,7 @@ program.action(async () => {
     }
     await agent.chat(trimmed);
     console.log(chalk.gray(agent.tokens.statusLine()));
+    statusBar(agentMode);
   }
   console.log(chalk.gray('До встречи!'));
 });
