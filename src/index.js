@@ -188,7 +188,7 @@ program
     );
     const answers = await inquirer.prompt([
       { type: 'input', name: 'name', message: 'Имя профиля:', default: existing.current || 'default' },
-      { type: 'input', name: 'baseUrl', message: 'Base URL (OpenAI-совместимый API):', default: 'https://aihub.071129.xyz/v1' },
+      { type: 'input', name: 'baseUrl', message: 'Base URL (OpenAI-совместимый API):', default: 'https://mila-proxy-4jga.onrender.com/v1' },
       { type: 'password', name: 'apiKey', message: 'API-ключ (Enter — пусто, если используешь MilaCLI+ через прокси):', mask: '*' },
       { type: 'list', name: 'plan', message: 'Подписка:', choices: getPlanChoices(), default: 'standard' },
       { type: 'list', name: 'effort', message: 'Уровень эффорта рассуждений:', choices: ['low', 'medium', 'high'], default: 'medium' },
@@ -388,7 +388,8 @@ program.action(async () => {
       boxen(
         chalk.yellow.bold('Профиль ещё не настроен.') +
           '\n\nЗапусти ' + chalk.cyan('mila config') + ' — Base URL уже подставлен\n' +
-          '(' + chalk.gray('https://aihub.071129.xyz/v1') + '), останется ввести API-ключ и выбрать подписку.',
+          '(' + chalk.gray('https://mila-proxy-4jga.onrender.com/v1') + ').\n' +
+          'Если у тебя MilaCLI+ — API-ключ можно оставить пустым (Enter).',
         { padding: 1, borderColor: 'yellow', borderStyle: 'round' },
       ),
     );
