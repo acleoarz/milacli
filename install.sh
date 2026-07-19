@@ -78,6 +78,15 @@ echo ""
 echo "Регистрирую глобальную команду 'mila' (npm link)..."
 npm link
 
+# ---------- Подписка ----------
+# ВАЖНО: install.sh использует общий бесплатный ключ (см. ниже) и всегда
+# ставит только базовую подписку MilaCLI. MilaCLI+ — платная, выдаётся
+# ТОЛЬКО через официальную покупку и активацию ключом: `mila key`, затем
+# `mila key <ключ>` после оплаты. Здесь выбора нет намеренно — иначе
+# каждый ставящий через этот скрипт получал бы MilaCLI+ бесплатно.
+MODEL="step-3.5-flash-2603"
+PLAN="standard"
+
 # ---------- Effort ----------
 echo ""
 echo "Выбери уровень effort (насколько глубоко модель рассуждает перед ответом):"
@@ -96,6 +105,23 @@ CONFIG_DIR="$HOME/.milacli"
 mkdir -p "$CONFIG_DIR"
 chmod 700 "$CONFIG_DIR"
 
+# HWID устройства — 12-символьный случайный идентификатор, генерируется
+# один раз и сохраняется в device.json. Это информационная метка "с какого
+# устройства создан профиль", а НЕ защита сама по себе — единственная
+# реальная защита профиля это пароль, который задаётся через `mila config`.
+if [ -f "$CONFIG_DIR/device.json" ]; then
+  HWID=$(grep -o '"hwid": *"[^"]*"' "$CONFIG_DIR/device.json" | sed 's/.*"\([A-Z0-9]*\)"$/\1/')
+fi
+if [ -z "$HWID" ]; then
+  HWID=$(head -c 32 /dev/urandom | tr -dc 'A-Z0-9' | head -c 12)
+  cat > "$CONFIG_DIR/device.json" << DEVEOF
+{
+  "hwid": "$HWID"
+}
+DEVEOF
+  chmod 600 "$CONFIG_DIR/device.json"
+fi
+
 # ВНИМАНИЕ: этот ключ общий для всех, кто ставит Милу через этот скрипт.
 # См. предупреждение в README — публичный ключ можно исчерпать/украсть
 # кем угодно, кто откроет этот файл.
@@ -106,8 +132,10 @@ cat > "$CONFIG_DIR/config.json" << JSONEOF
     "default": {
       "baseUrl": "https://aihub.071129.xyz/v1",
       "apiKey": "sk-mLfIB1JfxFUmtIxJAH4ywyjE5GMtcE5b2PVOfKS0Ktfm10UO",
-      "model": "step-3.5-flash-2603",
-      "effort": "$EFFORT"
+      "model": "$MODEL",
+      "plan": "$PLAN",
+      "effort": "$EFFORT",
+      "hwid": "$HWID"
     }
   }
 }
@@ -116,7 +144,9 @@ JSONEOF
 chmod 600 "$CONFIG_DIR/config.json"
 
 echo ""
-echo "✔ Готово! Профиль создан с effort=$EFFORT."
+echo "✔ Готово! Профиль создан: подписка=MilaCLI (стандартная), effort=$EFFORT."
+echo "  Пароль на профиль не задан — можешь добавить его позже через 'mila config'."
+echo "  Хочешь MilaCLI+ (мощнее, 1\$/мес)? Запусти 'mila key' для покупки."
 echo "Запусти:"
 echo "  mila            — Code Mode (файлы + терминал)"
 if [ "$INSTALL_AGENT" = true ]; then

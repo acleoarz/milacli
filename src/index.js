@@ -20,7 +20,13 @@ import {
   setCurrentProfile,
   listProfiles,
   configExists,
+  hashPassword,
+  verifyPassword,
+  needsPasswordCheck,
+  getDeviceHwid,
 } from './config.js';
+import { getPlanChoices, getPlanById, getPlanByModel } from './plans.js';
+import { getRequestCode, issueLicenseKey, verifyLicenseKey } from './license.js';
 import { Provider } from './provider.js';
 import { Agent } from './agent.js';
 
@@ -145,11 +151,27 @@ program
       { type: 'input', name: 'name', message: 'Имя профиля:', default: existing.current || 'default' },
       { type: 'input', name: 'baseUrl', message: 'Base URL (OpenAI-совместимый API):', default: 'https://aihub.071129.xyz/v1' },
       { type: 'password', name: 'apiKey', message: 'API-ключ:', mask: '*' },
-      { type: 'input', name: 'model', message: 'Имя модели:', default: 'step-3.5-flash-2603' },
+      { type: 'list', name: 'plan', message: 'Подписка:', choices: getPlanChoices(), default: 'standard' },
       { type: 'list', name: 'effort', message: 'Уровень эффорта рассуждений:', choices: ['low', 'medium', 'high'], default: 'medium' },
+      { type: 'confirm', name: 'setPassword', message: 'Установить пароль на этот профиль?', default: false },
     ]);
 
-    const ok = await runPingDiagnostics(answers);
+    let passwordHash = null;
+    if (answers.setPassword) {
+      const { password, confirmPassword } = await inquirer.prompt([
+        { type: 'password', name: 'password', message: 'Придумай пароль:', mask: '*' },
+        { type: 'password', name: 'confirmPassword', message: 'Повтори пароль:', mask: '*' },
+      ]);
+      if (!password || password !== confirmPassword) {
+        console.log(chalk.red('Пароли не совпадают или пусты — профиль будет сохранён без пароля.'));
+      } else {
+        passwordHash = hashPassword(password);
+      }
+    }
+
+    const plan = getPlanById(answers.plan);
+    const pingPayload = { baseUrl: answers.baseUrl, apiKey: answers.apiKey, model: plan.model, effort: answers.effort };
+    const ok = await runPingDiagnostics(pingPayload);
 
     let save = ok;
     if (!ok) {
@@ -160,9 +182,18 @@ program
     }
 
     if (save) {
-      const { name, ...profile } = answers;
-      saveProfile(name, profile);
-      console.log(chalk.green(`\n✔ Профиль "${name}" сохранён в ~/.milacli/config.json`));
+      const profile = {
+        baseUrl: answers.baseUrl,
+        apiKey: answers.apiKey,
+        model: plan.model,
+        plan: plan.id,
+        effort: answers.effort,
+        hwid: getDeviceHwid(),
+      };
+      if (passwordHash) profile.passwordHash = passwordHash;
+      saveProfile(answers.name, profile);
+      console.log(chalk.green(`\n✔ Профиль "${answers.name}" (${plan.label}) сохранён в ~/.milacli/config.json`));
+      if (passwordHash) console.log(chalk.gray('  Профиль защищён паролем — на другом устройстве при входе он будет запрошен.'));
     } else {
       console.log(chalk.yellow('\nКонфигурация не сохранена.'));
     }
@@ -180,7 +211,9 @@ program
     }
     names.forEach((n) => {
       const marker = n === current ? chalk.green('● ') : '  ';
-      console.log(`${marker}${n} ${chalk.gray(`(${profiles[n].model})`)}`);
+      const plan = getPlanByModel(profiles[n].model);
+      const lock = profiles[n].passwordHash ? chalk.yellow(' 🔒') : '';
+      console.log(`${marker}${n} ${chalk.gray(`(${plan ? plan.label : profiles[n].model})`)}${lock}`);
     });
   });
 
@@ -196,6 +229,88 @@ program
     }
   });
 
+/**
+ * Если профиль защищён паролем и создан на другом устройстве (HWID не
+ * совпадает с текущим) — просит ввести пароль перед тем, как отдать
+ * профиль в работу. Возвращает true, если можно продолжать.
+ */
+async function unlockProfile(profile) {
+  if (!needsPasswordCheck(profile)) return true;
+
+  console.log(
+    boxen(
+      chalk.yellow.bold('🔒 Профиль защищён паролем.') +
+        '\nЭтот профиль был создан на другом устройстве — введи пароль, чтобы продолжить.',
+      { padding: 1, borderColor: 'yellow', borderStyle: 'round' },
+    ),
+  );
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { password } = await inquirer.prompt([{ type: 'password', name: 'password', message: 'Пароль:', mask: '*' }]);
+    if (verifyPassword(password, profile.passwordHash)) return true;
+    console.log(chalk.red(`✖ Неверный пароль (попытка ${attempt + 1}/3).`));
+  }
+  console.log(chalk.red('Доступ отклонён.'));
+  return false;
+}
+
+program
+  .command('key [activationKey]')
+  .description('Без аргумента — показать свой код запроса для покупки MilaCLI+. С ключом — активировать подписку.')
+  .action(async (activationKey) => {
+    if (!activationKey) {
+      const code = getRequestCode();
+      console.log(
+        boxen(
+          chalk.bold('Твой код для покупки MilaCLI+:') +
+            `\n\n${chalk.cyanBright.bold(code)}\n\n` +
+            chalk.white('1. Оплати 1$/мес: ') + chalk.underline('https://yoomoney.ru/to/4100119523655218/100') + '\n' +
+            chalk.white('2. Пришли этот код и подтверждение оплаты в Telegram: ') + chalk.cyanBright.bold('@AnonymNakaz') + '\n' +
+            chalk.white('3. В ответ придёт ключ активации — активируй его командой:') + '\n' +
+            '   ' + chalk.cyan(`mila key ${code}#<ключ>`),
+          { padding: 1, borderColor: 'cyan', borderStyle: 'round' },
+        ),
+      );
+      return;
+    }
+
+    const { valid, reason } = verifyLicenseKey(activationKey);
+    if (!valid) {
+      console.log(chalk.red(`✖ Ключ не принят: ${reason}`));
+      return;
+    }
+
+    const profile = getCurrentProfile();
+    if (!profile) {
+      console.log(chalk.red('Нет активного профиля. Сначала выполни `mila config`.'));
+      return;
+    }
+
+    const cfg = listProfiles();
+    const plusPlan = getPlanById('plus');
+    const updated = { ...cfg.profiles[profile.name], model: plusPlan.model, plan: plusPlan.id, licenseKey: activationKey.trim() };
+    saveProfile(profile.name, updated);
+    console.log(chalk.green(`✔ MilaCLI+ активирована для профиля "${profile.name}"!`));
+  });
+
+program
+  .command('issue-key <requestCode>')
+  .description('[Только для владельца] Выдать ключ активации MilaCLI+ по коду запроса пользователя.')
+  .action((requestCode) => {
+    const privateKey = process.env.MILA_LICENSE_PRIVATE_KEY;
+    if (!privateKey) {
+      console.log(chalk.red('✖ Переменная окружения MILA_LICENSE_PRIVATE_KEY не задана — выдавать ключи может только владелец.'));
+      return;
+    }
+    try {
+      const key = issueLicenseKey(requestCode, privateKey);
+      console.log(boxen(chalk.green.bold('Ключ активации:') + `\n\n${chalk.cyanBright(key)}`, { padding: 1, borderColor: 'green', borderStyle: 'round' }));
+      console.log(chalk.gray('Отправь этот ключ покупателю целиком — он вводит его через `mila key <ключ>`.'));
+    } catch (err) {
+      console.log(chalk.red(`✖ ${err.message}`));
+    }
+  });
+
 program
   .command('run <prompt...>')
   .option('-y, --yes', 'Автоматически подтверждать действия низкого/среднего риска (НЕ действует на high-risk: удаление, команды, клики, ввод текста)')
@@ -206,6 +321,7 @@ program
       console.log(chalk.red('Нет активного профиля. Выполните `mila config`.'));
       return;
     }
+    if (!(await unlockProfile(profile))) return;
     const agentMode = !!program.opts().agent;
     const agent = new Agent(profile, { autoYes: !!opts.yes, agentMode });
     await agent.chat(promptParts.join(' '));
@@ -223,8 +339,8 @@ program.action(async () => {
     console.log(
       boxen(
         chalk.yellow.bold('Профиль ещё не настроен.') +
-          '\n\nЗапусти ' + chalk.cyan('mila config') + ' — Base URL и модель уже подставлены\n' +
-          '(' + chalk.gray('https://aihub.071129.xyz/v1, step-3.5-flash-2603') + '), нужно ввести только свой API-ключ.',
+          '\n\nЗапусти ' + chalk.cyan('mila config') + ' — Base URL уже подставлен\n' +
+          '(' + chalk.gray('https://aihub.071129.xyz/v1') + '), останется ввести API-ключ и выбрать подписку.',
         { padding: 1, borderColor: 'yellow', borderStyle: 'round' },
       ),
     );
@@ -232,7 +348,10 @@ program.action(async () => {
   }
 
   const profile = getCurrentProfile();
-  console.log(chalk.gray(`Профиль: ${profile.name} · Модель: ${profile.model} · Эффорт: ${profile.effort}`));
+  if (!(await unlockProfile(profile))) return;
+
+  const plan = getPlanByModel(profile.model);
+  console.log(chalk.gray(`Профиль: ${profile.name} · Подписка: ${plan ? plan.label : profile.model} · Эффорт: ${profile.effort}`));
   if (agentMode) {
     console.log(
       chalk.yellow(
